@@ -70,7 +70,8 @@ class NetworkBlock(nn.Module):
 
 
 class WideResNet(nn.Module):
-    def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0):
+    def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0,
+                 use_ifc=False, hidden_size=1024, project_size=256):
         super(WideResNet, self).__init__()
         channels = [16, 16*widen_factor, 32*widen_factor, 64*widen_factor]
         assert((depth - 4) % 6 == 0)
@@ -94,6 +95,14 @@ class WideResNet(nn.Module):
         self.fc = nn.Linear(channels[3], num_classes)
         self.channels = channels[3]
 
+        if use_ifc:
+            self.projector = nn.Sequential(
+                nn.Linear(self.channels, project_size),   # , hidden_size)
+                # nn.BatchNorm1d(hidden_size),             # (hidden_size)
+                # nn.ReLU(inplace=True),
+                # nn.Linear(hidden_size, project_size)
+            )
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight,
@@ -106,7 +115,7 @@ class WideResNet(nn.Module):
                 nn.init.xavier_normal_(m.weight)
                 nn.init.constant_(m.bias, 0.0)
 
-    def forward(self, x):
+    def forward(self, x, project_feat=False, predict_feat=False):
         out = self.conv1(x)
         out = self.block1(out)
         out = self.block2(out)
@@ -114,12 +123,27 @@ class WideResNet(nn.Module):
         out = self.relu(self.bn1(out))
         out = F.adaptive_avg_pool2d(out, 1)
         out = out.view(-1, self.channels)
-        return self.fc(out)
+
+        # unsyn-10
+        if not predict_feat and not project_feat:
+            return self.fc(out)
+        elif not predict_feat and project_feat:
+            raise NotImplemented("cause we use interleave")
+            # return self.fc(out), self.projector(out)
+        elif predict_feat and not project_feat:
+            raise NotImplemented("cause we use interleave")
+            # return self.fc(out), self.projector(out)
+        else:
+            return self.fc(out), self.projector(out), out
 
 
-def build_wideresnet(depth, widen_factor, dropout, num_classes):
+def build_wideresnet(depth, widen_factor, dropout, num_classes,
+                     args):
     logger.info(f"Model: WideResNet {depth}x{widen_factor}")
     return WideResNet(depth=depth,
                       widen_factor=widen_factor,
                       drop_rate=dropout,
-                      num_classes=num_classes)
+                      num_classes=num_classes,
+                      use_ifc=args.use_ifc,
+                      hidden_size=args.hidden_size,
+                      project_size=args.project_size)
